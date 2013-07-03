@@ -30,15 +30,25 @@ import ConfigParser
 import shutil
 import ftplib
 import datetime
- 
-config = ConfigParser.RawConfigParser(allow_no_value=True)
-config.read('backupcfg.ini')
 
+# Added
+from sys import exit
+from base64 import b64decode
+try:
+    from settings import ftp_user, ftp_password, ftp_host, keep_for_months, directories,\
+                         logger, backup_name
+except Exception as e:
+    print str(e)+'. Please check your settings.py file'
+    exit(1)
+
+ftp_user = b64decode(ftp_user)
+ftp_password = b64decode(ftp_password)
+ 
 """
 Returns the Diff in Month between two dates
 """
 def diff_month(d1, d2):
-	return (d1.year - d2.year)*12 + d1.month - d2.month
+    return (d1.year - d2.year)*12 + d1.month - d2.month
  
 def makeArchive(fileList, archive):
     """
@@ -79,86 +89,83 @@ def dirEntries(dir_name, subdir, *args):
         elif os.path.isdir(dirfile) and subdir:
             fileList.extend(dirEntries(dirfile, subdir, *args))
     return fileList
-	
+    
 if __name__ == '__main__':
-	print "ZIP to FTP Backup Tool"
-	print "v0.0.1 - Johann du Toit"
-	print "----------"
+    logger.info('START of the script')
 
-	filelistings = [] # All Files that will be added to the Archive
+    filelistings = [] # All Files that will be added to the Archive
 
-	print "\n====="
-	# Add Files From Locations
-	for folder in config.options("folders"):
-			print "Scanning " + str(folder.strip())
-			for fi in dirEntries(folder.strip(' \t\n\r'), True):
-					if "WHAT IS TRANSFER.txt" not in fi:
-							filelistings.append(fi)
-	print "=====\n"
+    # Add Files From Locations
+    for dir in directories: 
+            logger.info('Scanning ' + str(dir.strip()))
+            for fi in dirEntries(dir.strip(' \t\n\r'), True):
+                    if "WHAT IS TRANSFER.txt" not in fi:
+                            filelistings.append(fi)
 
-	now = datetime.datetime.now()
-	zipname = r'shaka.' + now.strftime("%d.%m.%Y") + '.zip'
+    now = datetime.datetime.now()
+    #zipname = r'shaka.' + now.strftime("%d.%m.%Y") + '.zip'
+    zipname = backup_name + '.' + now.strftime("%d.%m.%Y.%H.%M") + '.zip'
 
-	print "\n====="
-	print "Add Backup to a ZIP File"
-	makeArchive(filelistings, zipname)
-	print "Backup was Zipped"
-	print "=====\n"
+    logger.info('Add Backup to a ZIP File')
+    makeArchive(filelistings, zipname)
+    logger.info('Backup was Zipped')
+    logger.info('Connecting to FTP Server...')
 
-	print "\n====="
-	print "Connecting to FTP Server..."
+    ftp = ftplib.FTP(ftp_host)
+    
+    logger.info('Entering passive mode...')
+    ftp.set_pasv(True)
 
-	ftp = ftplib.FTP(config.get("ftp", 'host'))
-	
-	print "Logging in..."
-	
-	ftp.login(config.get("ftp", 'username'), config.get("ftp", 'password'))
+    logger.info('Logging in...')
+    
+    ftp.login(ftp_user,ftp_password)
 
-	print "Getting Directory Listing..."
-	
-	files = ftp.nlst()
-	
-	print "Found " + str(len(files)) + " files"
-	
-	print "Removing Stale Backups older than " + str(config.get("ftp", 'keep_for_months').strip()) + " Month(s)"
-	
-	count_deleted = 0
-	months_from_now = int((datetime.date.today() + datetime.timedelta( ( int(config.get("ftp", 'keep_for_months').strip()) *365) / 12 )).strftime("%m"))
-	
-	for file in files:
-		if "shaka." in file:
-			file_parts = file.split('.')
-			if len(file_parts) == 5:
-				year = int(file_parts[3])
-				month = int(file_parts[2])
-				date = int(file_parts[1])
-				
-				date_month_diff = diff_month(datetime.datetime( int(now.strftime("%Y")), int(now.strftime("%m")), int(now.strftime("%d")) ), datetime.datetime(year,month,date))
-				
-				if date_month_diff >= int(config.get("ftp", 'keep_for_months').strip()):
-					count_deleted = count_deleted + 1
-					
-					try:
-						print "Removing Backup " + str(file) + " it's " + str(date_month_diff) + " Month(s) Old"
-						ftp.delete(file)
-					except:
-						pass
-	
-	print "Removed " + str(count_deleted) + " Backups"
-	
-	print "Uploading Backup Zip..."
-	
-	try:
-		ftp.storbinary('STOR ' + zipname, open(zipname, 'rb'))
-	except:
-		pass
-	
-	print "Closing Connection..."
-	
-	ftp.close()
-	
-	print "Deleting Backup ZIP"
-	os.remove(zipname)
-	
-	print "=====\n"
+    logger.info('Getting Directory Listing...')
+    
+    files = ftp.nlst()
+    
+    logger.info('Found ' + str(len(files)) + ' files')
+    
+    logger.info('Removing Stale Backups directories than ' + str(keep_for_months).strip() + ' Month(s)')
+    
+    count_deleted = 0
+    months_from_now = int((datetime.date.today() + datetime.timedelta( (int(keep_for_months) *365) / 12 )).strftime("%m"))
+    
+    for file in files:
+        if "shaka." in file:
+            file_parts = file.split('.')
+            if len(file_parts) == 5:
+                year = int(file_parts[3])
+                month = int(file_parts[2])
+                date = int(file_parts[1])
+                
+                date_month_diff = diff_month(datetime.datetime( int(now.strftime("%Y")), int(now.strftime("%m")), int(now.strftime("%d")) ), datetime.datetime(year,month,date))
+                
+                #if date_month_diff >= int(config.get("ftp", 'keep_for_months').strip()):
+                if date_month_diff >= int(keep_for_months):
+                    count_deleted = count_deleted + 1
+                    
+                    try:
+                        logger.info('Removing Backup ' + str(file) + " it's " + str(date_month_diff) + ' Month(s) Old')
+                        ftp.delete(file)
+                    except:
+                        pass
+    
+    logger.info('Removed ' + str(count_deleted) + ' Backups')
+    
+    logger.info('Uploading Backup Zip...')
+    
+    try:
+        ftp.storbinary('STOR ' + zipname, open(zipname, 'rb'))
+    except:
+        pass
+    
+    logger.info('Closing Connection...')
+    
+    ftp.close()
+    
+    logger.info('Deleting Backup ZIP')
+    os.remove(zipname)
+    logger.info('END of the script')
+    
  
